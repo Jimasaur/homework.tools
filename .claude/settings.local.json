@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create:*)",
+      "Bash(npm install)",
+      "Bash(npm install:*)",
+      "Bash(npx tailwindcss init -p)",
+      "Bash(tree:*)",
+      "Bash(PROJECT_STRUCTURE.txt 2)",
+      "Bash(nul)",
+      "Bash(dir:*)",
+      "Bash(PROJECT_STRUCTURE.txt)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker-compose ps:*)",
+      "Bash(docker-compose logs:*)",
+      "Bash(docker-compose down:*)",
+      "Bash(timeout 15 docker-compose logs:*)",
+      "Bash(curl:*)",
+      "Bash(docker-compose exec:*)",
+      "Bash(docker-compose restart:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nInitial commit: Complete homework.tools platform\n\n- FastAPI backend with OpenAI integration\n- React + TypeScript frontend with modern chat UI\n- PostgreSQL + Redis infrastructure\n- Docker Compose setup for local development\n- Adaptive tutoring with 6 learning personas\n- OCR support for images and PDFs\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git config:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
