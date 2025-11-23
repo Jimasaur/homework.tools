@@ -1,85 +1,88 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { submitUpload, submitText } from '../lib/api';
+import { submitUpload, submitText, getGuidance } from '../lib/api';
 import { useStore } from '../store/useStore';
+import { SettingsModal } from './SettingsModal';
 
-const PERSONAS = [
-  {
-    id: 'eli5',
-    name: 'ELI5',
-    description: 'Explain like I\'m 5',
-    detail: 'Simple terms for kindergarten',
-    icon: '🧒',
-    color: 'from-pink-500 to-rose-500',
-    gradeLevel: 1,
-  },
-  {
-    id: 'elementary',
-    name: 'Elementary',
-    description: 'Common Language',
-    detail: '5th grade reading level, layman\'s terms',
-    icon: '📚',
-    color: 'from-blue-500 to-cyan-500',
-    gradeLevel: 5,
-  },
-  {
-    id: 'highschool',
-    name: 'High School',
-    description: 'Smarty Pants',
-    detail: 'Standard academic terminology',
-    icon: '🎓',
-    color: 'from-purple-500 to-indigo-500',
-    gradeLevel: 10,
-  },
-  {
-    id: 'college',
-    name: 'College',
-    description: 'Undergrad Level',
-    detail: 'Advanced concepts and theory',
-    icon: '🏛️',
-    color: 'from-orange-500 to-amber-500',
-    gradeLevel: 13,
-  },
-  {
-    id: 'masters',
-    name: 'Masters',
-    description: 'Graduate Level',
-    detail: 'Research and specialized knowledge',
-    icon: '🔬',
-    color: 'from-green-500 to-emerald-500',
-    gradeLevel: 16,
-  },
-  {
-    id: 'phd',
-    name: 'PhD',
-    description: 'Expert Level',
-    detail: 'Cutting-edge research terminology',
-    icon: '🧠',
-    color: 'from-red-500 to-pink-600',
-    gradeLevel: 20,
-  },
+const QUICK_CHIPS = [
+  { icon: '➗', label: 'Help solve for X', prompt: 'Help me solve this equation for X: ' },
+  { icon: '📖', label: 'Summarize text', prompt: 'Please summarize this text for me: ' },
+  { icon: '🧠', label: 'Essay brainstorm', prompt: 'Help me brainstorm ideas for an essay about: ' },
+  { icon: '🗣️', label: 'Explain like I\'m 10', prompt: 'Explain this concept like I am 10 years old: ' },
 ];
 
 export function ChatInterface() {
   const [message, setMessage] = useState('');
-  const [selectedPersona, setSelectedPersona] = useState(PERSONAS[1]); // Default to Elementary
-  const [showPersonaMenu, setShowPersonaMenu] = useState(false);
+  const [showParentContext, setShowParentContext] = useState<Record<string, boolean>>({}); // Track expanded state by message ID
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const { setSubmission, setIsLoading, setError, sessionId } = useStore();
+  const {
+    submission,
+    setSubmission,
+    setIsLoading,
+    isLoading,
+    setError,
+    sessionId,
+    settings,
+    history,
+    addMessage,
+    clearHistory
+  } = useStore();
+
+  // Auto-focus input on load
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  // Scroll to bottom on new history
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [history, isLoading]);
 
   const onDrop = async (acceptedFiles: File[]) => {
     if (acceptedFiles.length === 0) return;
-
     const file = acceptedFiles[0];
     setIsLoading(true);
     setError(null);
 
+    // Optimistic user message
+    const userMsgId = Date.now().toString();
+    addMessage({
+      id: userMsgId,
+      role: 'user',
+      content: `Uploaded file: ${file.name}`,
+      timestamp: Date.now()
+    });
+
     try {
-      const submission = await submitUpload(file, sessionId || undefined);
-      setSubmission(submission);
+      const sub = await submitUpload(file, sessionId || undefined);
+      setSubmission(sub);
+
+      // Fetch guidance immediately
+      const guidanceData = await getGuidance(sub.id, settings.provider, settings.apiKey);
+
+      addMessage({
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: guidanceData,
+        timestamp: Date.now()
+      });
+
     } catch (error: any) {
-      setError(error.response?.data?.detail || 'Upload failed. Please try again.');
+      let errorMessage = 'Upload failed. Please try again.';
+      if (error.response?.data?.detail) {
+        if (typeof error.response.data.detail === 'string') {
+          errorMessage = error.response.data.detail;
+        } else if (Array.isArray(error.response.data.detail)) {
+          errorMessage = error.response.data.detail.map((e: any) => e.msg).join(', ');
+        } else {
+          errorMessage = JSON.stringify(error.response.data.detail);
+        }
+      }
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -87,315 +90,283 @@ export function ChatInterface() {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: {
-      'image/*': ['.png', '.jpg', '.jpeg'],
-      'application/pdf': ['.pdf'],
-    },
+    accept: { 'image/*': ['.png', '.jpg', '.jpeg'], 'application/pdf': ['.pdf'] },
     maxSize: 10 * 1024 * 1024,
     multiple: false,
     noClick: true,
   });
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!message.trim()) return;
+  const handleSubmit = async (e?: React.FormEvent, overrideText?: string) => {
+    if (e) e.preventDefault();
+    const textToSubmit = overrideText || message;
+    if (!textToSubmit.trim()) return;
 
     setIsLoading(true);
     setError(null);
+    setMessage('');
+
+    // Optimistic user message
+    addMessage({
+      id: Date.now().toString(),
+      role: 'user',
+      content: textToSubmit,
+      timestamp: Date.now()
+    });
 
     try {
-      const submission = await submitText(message, sessionId || undefined);
-      setSubmission(submission);
-      setMessage('');
+      const sub = await submitText(textToSubmit, sessionId || undefined);
+      setSubmission(sub);
+
+      // Fetch guidance immediately
+      const guidanceData = await getGuidance(sub.id, settings.provider, settings.apiKey);
+
+      addMessage({
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: guidanceData,
+        timestamp: Date.now()
+      });
+
     } catch (error: any) {
-      setError(error.response?.data?.detail || 'Failed to submit. Please try again.');
+      let errorMessage = 'Failed to submit. Please try again.';
+      if (error.response?.data?.detail) {
+        if (typeof error.response.data.detail === 'string') {
+          errorMessage = error.response.data.detail;
+        } else if (Array.isArray(error.response.data.detail)) {
+          errorMessage = error.response.data.detail.map((e: any) => e.msg).join(', ');
+        } else {
+          errorMessage = JSON.stringify(error.response.data.detail);
+        }
+      }
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleFileClick = () => {
-    fileInputRef.current?.click();
+  const handleChipClick = (promptPrefix: string) => {
+    setMessage(promptPrefix);
+    inputRef.current?.focus();
+  };
+
+  const toggleParentContext = (msgId: string) => {
+    setShowParentContext(prev => ({
+      ...prev,
+      [msgId]: !prev[msgId]
+    }));
   };
 
   return (
-    <div {...getRootProps()} style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+    <div {...getRootProps()} className="flex flex-col h-full bg-white relative overflow-hidden font-sans">
       <input {...getInputProps()} />
 
-      {/* Drag overlay */}
-      {isDragActive && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(59, 130, 246, 0.1)',
-          backdropFilter: 'blur(4px)',
-          zIndex: 50,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center'
-        }}>
-          <div style={{
-            background: 'white',
-            borderRadius: '16px',
-            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-            padding: '48px',
-            textAlign: 'center'
-          }}>
-            <div style={{ fontSize: '64px', marginBottom: '16px' }}>📤</div>
-            <p style={{ fontSize: '24px', fontWeight: 'bold', color: '#111827', marginBottom: '8px' }}>Drop your file here</p>
-            <p style={{ color: '#6B7280' }}>Upload images or PDFs</p>
-          </div>
-        </div>
-      )}
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
 
       {/* Header */}
-      <div style={{ textAlign: 'center', padding: '48px 16px 24px', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '8px' }}>
-          <span style={{ fontSize: '32px' }}>📚</span>
-          <h1 style={{ fontSize: '36px', fontWeight: 'bold', color: '#111827', margin: 0 }}>
-            Homework.tools
-          </h1>
+      <header className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-white z-10">
+        <div className="flex items-center gap-2">
+          <div className="text-2xl text-blue-500">
+            <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M16 28C22.6274 28 28 22.6274 28 16C28 9.37258 22.6274 4 16 4C9.37258 4 4 9.37258 4 16C4 22.6274 9.37258 28 16 28Z" stroke="currentColor" strokeWidth="2" />
+              <path d="M10 16H22" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <path d="M16 10V22" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </div>
+          <span className="font-semibold text-gray-700 text-lg tracking-tight">homework.tools</span>
         </div>
-        <p style={{ color: '#6B7280', fontSize: '18px', margin: 0 }}>
-          AI tutor that adapts to your learning level
-        </p>
-      </div>
-
-      {/* Main content - centered */}
-      <div style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '0 16px 48px',
-        overflow: 'auto'
-      }}>
-        <div style={{ width: '100%', maxWidth: '768px' }}>
-          {/* Persona Selector */}
-          <div style={{ position: 'relative', marginBottom: '24px' }}>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="text-gray-400 hover:text-gray-600 transition-colors"
+            title="Settings"
+          >
+            <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
+          {history.length > 0 && (
             <button
-              type="button"
-              onClick={() => setShowPersonaMenu(!showPersonaMenu)}
-              className={`bg-gradient-to-r ${selectedPersona.color}`}
-              style={{
-                width: '100%',
-                color: 'white',
-                borderRadius: '12px',
-                padding: '12px 20px',
-                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                border: 'none',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                transition: 'all 0.2s'
-              }}
+              onClick={clearHistory}
+              className="text-sm font-medium text-red-400 hover:text-red-600 transition-colors"
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span style={{ fontSize: '24px' }}>{selectedPersona.icon}</span>
-                <div style={{ textAlign: 'left' }}>
-                  <div style={{ fontWeight: 'bold', fontSize: '16px' }}>{selectedPersona.name}</div>
-                  <div style={{ fontSize: '12px', opacity: 0.9 }}>{selectedPersona.description}</div>
+              Clear Chat
+            </button>
+          )}
+        </div>
+      </header>
+
+      {/* Chat Area */}
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-8">
+        {/* Welcome Message (only if history is empty) */}
+        {history.length === 0 && (
+          <div className="flex gap-4 max-w-3xl mx-auto mt-8 animate-fade-in">
+            <div className="w-10 h-10 rounded-full bg-white border border-blue-100 flex items-center justify-center text-xl flex-shrink-0 shadow-sm text-blue-500">
+              🤖
+            </div>
+            <div className="bg-white border border-gray-100 rounded-2xl rounded-tl-none p-5 text-gray-800 shadow-sm">
+              <p className="leading-relaxed">Hi! I'm your AI homework partner. I'm here to help you and your parent understand big concepts together. What are we working on right now? (Math, Science, History...)</p>
+            </div>
+          </div>
+        )}
+
+        {/* History Loop */}
+        {history.map((msg) => (
+          <div key={msg.id} className="animate-fade-in">
+            {msg.role === 'user' ? (
+              <div className="flex flex-col items-end max-w-3xl mx-auto">
+                <div className="text-xs text-gray-400 mb-1 mr-2">You & Parent</div>
+                <div className="bg-gray-100 text-gray-800 rounded-2xl rounded-tr-none p-4 px-6 shadow-sm max-w-[85%]">
+                  <p>{typeof msg.content === 'string' ? msg.content : 'Uploaded a file'}</p>
                 </div>
               </div>
-              <span style={{ fontSize: '16px' }}>{showPersonaMenu ? '▲' : '▼'}</span>
-            </button>
-
-            {/* Dropdown */}
-            {showPersonaMenu && (
-              <div style={{
-                position: 'absolute',
-                top: '100%',
-                left: 0,
-                right: 0,
-                marginTop: '8px',
-                background: 'white',
-                borderRadius: '12px',
-                boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
-                border: '1px solid #E5E7EB',
-                overflow: 'hidden',
-                zIndex: 20
-              }}>
-                <div style={{ padding: '8px', maxHeight: '320px', overflowY: 'auto' }}>
-                  {PERSONAS.map((persona) => (
-                    <button
-                      key={persona.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedPersona(persona);
-                        setShowPersonaMenu(false);
-                      }}
-                      style={{
-                        width: '100%',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '12px',
-                        padding: '12px 16px',
-                        borderRadius: '8px',
-                        border: 'none',
-                        background: selectedPersona.id === persona.id ? '#F3F4F6' : 'transparent',
-                        cursor: 'pointer',
-                        transition: 'background 0.2s'
-                      }}
-                      onMouseEnter={(e) => {
-                        if (selectedPersona.id !== persona.id) {
-                          e.currentTarget.style.background = '#F9FAFB';
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (selectedPersona.id !== persona.id) {
-                          e.currentTarget.style.background = 'transparent';
-                        }
-                      }}
-                    >
-                      <span style={{ fontSize: '20px' }}>{persona.icon}</span>
-                      <div style={{ flex: 1, textAlign: 'left' }}>
-                        <div style={{ fontWeight: 600, color: '#111827', fontSize: '14px' }}>{persona.name}</div>
-                        <div style={{ fontSize: '12px', color: '#6B7280' }}>{persona.detail}</div>
+            ) : (
+              <div className="max-w-3xl mx-auto space-y-4">
+                <div className="flex gap-4">
+                  <div className="w-10 h-10 rounded-full bg-white border border-blue-100 flex items-center justify-center text-xl flex-shrink-0 shadow-sm text-blue-500">
+                    🤖
+                  </div>
+                  <div className="flex-1 space-y-3">
+                    {/* Student Response */}
+                    <div className="bg-green-50 border border-green-100 rounded-2xl rounded-tl-none overflow-hidden shadow-sm">
+                      <div className="bg-green-100/50 px-5 py-2 border-b border-green-100 flex items-center gap-2">
+                        <span className="font-semibold text-green-800 text-sm">For the Student</span>
+                        <span className="text-lg">🧑‍🎓</span>
                       </div>
-                      {selectedPersona.id === persona.id && (
-                        <span style={{ color: '#3B82F6', fontSize: '16px' }}>✓</span>
-                      )}
-                    </button>
-                  ))}
+                      <div className="p-5">
+                        <p className="text-gray-800 leading-relaxed text-lg">
+                          {typeof msg.content !== 'string' ? msg.content.micro_explanation : "I couldn't generate a response."}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Parent Context (Expandable) */}
+                    {typeof msg.content !== 'string' && (
+                      <div className="bg-blue-50 border border-blue-100 rounded-xl overflow-hidden shadow-sm transition-all duration-300">
+                        <button
+                          onClick={() => toggleParentContext(msg.id)}
+                          className="w-full flex items-center justify-between p-3 px-4 bg-blue-100/50 hover:bg-blue-100 transition-colors text-left"
+                        >
+                          <div className="flex items-center gap-2 text-blue-900 font-semibold text-sm">
+                            <span>Parent Context & Teaching Tips</span> <span>ℹ️</span>
+                          </div>
+                          <span className={`transform transition-transform duration-200 text-blue-400 ${showParentContext[msg.id] ? 'rotate-180' : ''}`}>
+                            ▼
+                          </span>
+                        </button>
+
+                        {showParentContext[msg.id] && (
+                          <div className="p-5 bg-white/50 text-gray-700 text-sm space-y-3 border-t border-blue-100">
+                            {msg.content.error_warnings.map((warning, idx) => (
+                              <div key={idx}>
+                                <span className="font-semibold text-gray-900">Tip: </span>
+                                {warning}
+                              </div>
+                            ))}
+                            {!msg.content.error_warnings.length && <p>No specific parent tips for this one.</p>}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
           </div>
+        ))}
 
-          {/* Input Form */}
-          <form onSubmit={handleSubmit}>
-            <div style={{
-              background: 'white',
-              borderRadius: '16px',
-              boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
-              border: '1px solid #E5E7EB',
-              overflow: 'hidden'
-            }}>
-              <textarea
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSubmit(e);
-                  }
-                }}
-                placeholder="Type your homework question here... (or drag and drop an image)"
-                style={{
-                  width: '100%',
-                  padding: '16px 24px',
-                  border: 'none',
-                  outline: 'none',
-                  resize: 'none',
-                  fontSize: '16px',
-                  fontFamily: 'inherit',
-                  minHeight: '120px'
-                }}
-                rows={4}
-              />
-
-              {/* Action Bar */}
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '12px 16px',
-                background: '#F9FAFB',
-                borderTop: '1px solid #E5E7EB'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <button
-                    type="button"
-                    onClick={handleFileClick}
-                    style={{
-                      padding: '8px',
-                      color: '#6B7280',
-                      background: 'transparent',
-                      border: 'none',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = '#E5E7EB';
-                      e.currentTarget.style.color = '#111827';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'transparent';
-                      e.currentTarget.style.color = '#6B7280';
-                    }}
-                    title="Upload image or PDF"
-                  >
-                    <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                    </svg>
-                  </button>
-
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*,.pdf"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) onDrop([file]);
-                    }}
-                    style={{ display: 'none' }}
-                  />
-
-                  <span style={{ fontSize: '12px', color: '#9CA3AF', marginLeft: '8px' }}>
-                    Shift + Enter for new line
-                  </span>
-                </div>
-
-                {/* Send Button */}
-                <button
-                  type="submit"
-                  disabled={!message.trim()}
-                  className={message.trim() ? `bg-gradient-to-r ${selectedPersona.color}` : ''}
-                  style={{
-                    padding: '8px 24px',
-                    borderRadius: '8px',
-                    border: 'none',
-                    fontWeight: 500,
-                    cursor: message.trim() ? 'pointer' : 'not-allowed',
-                    background: message.trim() ? undefined : '#E5E7EB',
-                    color: message.trim() ? 'white' : '#9CA3AF',
-                    boxShadow: message.trim() ? '0 4px 6px -1px rgba(0, 0, 0, 0.1)' : 'none',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    transition: 'all 0.2s'
-                  }}
-                >
-                  <span>Send</span>
-                  <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                  </svg>
-                </button>
-              </div>
+        {/* Loading State */}
+        {isLoading && (
+          <div className="flex gap-4 max-w-3xl mx-auto animate-pulse">
+            <div className="w-10 h-10 rounded-full bg-white border border-blue-100 flex items-center justify-center text-xl flex-shrink-0 shadow-sm">
+              🤖
             </div>
-          </form>
+            <div className="bg-gray-50 rounded-2xl rounded-tl-none p-4 text-gray-400 w-64 italic">
+              Thinking...
+            </div>
+          </div>
+        )}
 
-          {/* Helper Text */}
-          <p style={{
-            textAlign: 'center',
-            fontSize: '14px',
-            color: '#9CA3AF',
-            marginTop: '16px',
-            marginBottom: 0
-          }}>
-            Upload images, PDFs, or type your question • AI-powered tutoring adapts to your level
-          </p>
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input Area */}
+      <div className="p-4 sm:p-6 bg-white">
+        <div className="max-w-3xl mx-auto space-y-4">
+
+          {/* Quick Chips (only if history is empty) */}
+          {history.length === 0 && (
+            <div className="flex flex-wrap gap-2 justify-center sm:justify-start px-2">
+              {QUICK_CHIPS.map((chip) => (
+                <button
+                  key={chip.label}
+                  onClick={() => handleChipClick(chip.prompt)}
+                  className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-gray-50 border border-gray-200 rounded-full text-sm text-gray-600 transition-all shadow-sm hover:shadow-md"
+                >
+                  <span>{chip.icon}</span>
+                  <span className="font-medium">{chip.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Input Bar */}
+          <div className={`relative shadow-sm rounded-2xl border-2 bg-white transition-all ${isLoading ? 'opacity-50 pointer-events-none' : ''} focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/10 border-gray-200`}>
+            <textarea
+              ref={inputRef}
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit();
+                }
+              }}
+              placeholder="Type your next question or paste a problem here..."
+              className="w-full p-4 pr-12 bg-transparent border-none focus:ring-0 resize-none text-lg placeholder-gray-400 rounded-2xl"
+              rows={1}
+              style={{ minHeight: '60px', maxHeight: '200px' }}
+            />
+            <div className="absolute right-2 bottom-2 flex items-center gap-1">
+              {/* File Upload Button */}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-full transition-colors"
+                title="Upload image or PDF"
+              >
+                <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,.pdf"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onDrop([file]);
+                }}
+                className="hidden"
+              />
+            </div>
+          </div>
+
+          <div className="text-center">
+            <p className="text-xs text-gray-400 font-medium">Powered by Google AI, OpenAI & Anthropic for diverse, safe support.</p>
+          </div>
         </div>
       </div>
+
+      {/* Drag Overlay */}
+      {isDragActive && (
+        <div className="absolute inset-0 bg-blue-500/10 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-white p-8 rounded-2xl shadow-2xl text-center">
+            <div className="text-6xl mb-4">📤</div>
+            <p className="text-xl font-bold text-gray-900">Drop your file here</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

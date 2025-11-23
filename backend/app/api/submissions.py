@@ -1,27 +1,39 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Optional
+from typing import Optional, List
 import uuid
 from pathlib import Path
 import aiofiles
+from pydantic import BaseModel
 
 from app.database import get_db
 from app.models import Submission, Session as SessionModel
 from app.schemas import (
     SubmissionResponse,
-    GuidanceResponse,
     PracticeProblem,
     SessionCreate,
     SessionResponse
 )
 from app.services.ocr import ParsingOrchestrator
 from app.services.openai_client import openai_client
+from app.services.gemini_client import gemini_client
+from app.services.llm_service import llm_service # New import
 from app.config import settings
 
 router = APIRouter()
 parsing_orchestrator = ParsingOrchestrator()
 
+# New Pydantic model for GuidanceResponse, replacing the one from app.schemas for this context
+class GuidanceResponse(BaseModel):
+    micro_explanation: str
+    step_breakdown: List[dict] = []
+    error_warnings: List[str] = []
+    interactive_checks: List[dict] = []
+    reveal_sequence: List[dict] = []
+
+# Simple in-memory store for the demo (to support the new /text and /guidance flow)
+submission_store = {}
 
 @router.post("/upload", response_model=SubmissionResponse)
 async def create_submission_upload(
@@ -104,49 +116,45 @@ async def create_submission_upload(
     return submission
 
 
+class TextSubmissionCreate(BaseModel):
+    text: str
+    session_id: Optional[str] = None
+
 @router.post("/text", response_model=SubmissionResponse)
 async def create_submission_text(
-    text: str = Form(...),
-    session_id: Optional[str] = Form(None),
+    submission_data: TextSubmissionCreate,
     db: AsyncSession = Depends(get_db)
 ):
     """
     Submit typed text for homework help.
     """
-    if not text or len(text.strip()) < 5:
+    text = submission_data.text
+    session_id = submission_data.session_id
+
+    if not text or len(text.strip()) < 2:
         raise HTTPException(status_code=400, detail="Text too short")
 
-    # Parse the submission
-    try:
-        parsed_data = await parsing_orchestrator.parse_submission(
-            file_path=None,
-            text=text,
-            file_type="text"
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Parsing error: {str(e)}")
-
-    # Classify the submission
-    if parsed_data['detected_problems']:
-        first_problem = parsed_data['detected_problems'][0]['text']
-        classification = await openai_client.classify_submission(first_problem)
-    else:
-        classification = {
-            "subject": "other",
-            "topic": "unknown",
-            "grade_level": 8,
-            "difficulty": "intermediate",
-            "prerequisites": [],
-            "detected_gaps": []
-        }
+    # Use Gemini for immediate dual response
+    # Note: We are bypassing the full parsing orchestrator for speed in this "Zero-Friction" flow
+    # But we still create a submission record for history
+    
+    # Classify briefly (or default)
+    classification = {
+        "subject": "general",
+        "topic": "unknown",
+        "grade_level": 8,
+        "difficulty": "intermediate",
+        "prerequisites": [],
+        "detected_gaps": []
+    }
 
     # Create submission record
     submission = Submission(
         session_id=uuid.UUID(session_id) if session_id else None,
         file_type="text",
-        raw_text=parsed_data['raw_text'],
-        parsed_problems=parsed_data['detected_problems'],
-        confidence_score=int(parsed_data['confidence_score']),
+        raw_text=text,
+        parsed_problems=[{"text": text, "order": 0, "type": "text"}],
+        confidence_score=100,
         subject=classification['subject'],
         topic=classification['topic'],
         grade_level=classification['grade_level'],
@@ -166,6 +174,8 @@ async def create_submission_text(
 async def get_guidance(
     submission_id: str,
     problem_index: int = 0,
+    x_api_key: Optional[str] = Header(None),
+    x_provider: Optional[str] = Header("gemini"),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -186,25 +196,26 @@ async def get_guidance(
 
     problem = submission.parsed_problems[problem_index]
 
-    # Get session for scaffolding mode
-    scaffolding_mode = "moderate"
-    if submission.session_id:
-        session_result = await db.execute(
-            select(SessionModel).where(SessionModel.id == submission.session_id)
-        )
-        session = session_result.scalar_one_or_none()
-        if session:
-            scaffolding_mode = session.scaffolding_mode
-
-    # Generate guidance
-    guidance = await openai_client.generate_guidance(
-        problem_text=problem['text'],
-        subject=submission.subject or "other",
-        grade_level=submission.grade_level or 8,
-        scaffolding_mode=scaffolding_mode
+    # Use LLMService for the dual response (Student + Parent)
+    # We map the response to the GuidanceResponse structure
+    
+    llm_response = await llm_service.generate_dual_response(
+        user_query=problem['text'],
+        provider=x_provider,
+        api_key=x_api_key
     )
-
-    return guidance
+    
+    # Map to GuidanceResponse
+    return {
+        "micro_explanation": llm_response.get("student_response", ""),
+        "step_breakdown": [], # Not used in this view
+        "error_warnings": [
+            f"Parent Tip: {llm_response.get('parent_context', {}).get('teaching_tips', '')}",
+            f"Deeper Terms: {', '.join(llm_response.get('parent_context', {}).get('deeper_terms', []))}"
+        ],
+        "interactive_checks": [],
+        "reveal_sequence": []
+    }
 
 
 @router.get("/{submission_id}/practice")

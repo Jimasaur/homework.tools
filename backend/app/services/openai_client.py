@@ -264,5 +264,55 @@ Provide JSON:
             }
 
 
+    async def generate_dual_response(self, user_query: str, grade_level: int = 8) -> dict:
+        """
+        Generate a dual response: Student Explanation + Parent Context.
+        """
+        prompt = f"""You are a homework assistant.
+        
+        User Query: {user_query}
+        Target Grade Level: {grade_level}
+
+        Provide a JSON response with two distinct parts:
+        1. "student_response": A clear, simple, conceptual explanation for the student. Use analogies. Be encouraging.
+        2. "parent_context": A deeper explanation for the parent, including technical terms, teaching tips, and what to look out for.
+
+        Format:
+        {{
+            "student_response": "...",
+            "parent_context": {{
+                "deeper_terms": ["term1", "term2"],
+                "teaching_tips": "...",
+                "explanation": "..."
+            }}
+        }}
+        """
+
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model_reasoning,
+                messages=[
+                    {"role": "system", "content": "You are a helpful educational assistant."},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.7
+            )
+
+            result = json.loads(response.choices[0].message.content)
+            return result
+
+        except Exception as e:
+            print(f"OpenAI Dual Response error: {e}")
+            return {
+                "student_response": "I'm having trouble connecting to my brain right now. Please try again!",
+                "parent_context": {
+                    "deeper_terms": [],
+                    "teaching_tips": "Check internet connection or API status.",
+                    "explanation": "Error generating response."
+                }
+            }
+
+
 # Singleton instance
 openai_client = OpenAIClient()

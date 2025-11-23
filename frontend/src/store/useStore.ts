@@ -1,77 +1,83 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { Submission, Guidance, PracticeProblem } from '../lib/api';
 
-interface AppState {
-  // Current submission
+interface Settings {
+  provider: 'gemini' | 'openai';
+  apiKey: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string | Guidance;
+  timestamp: number;
+}
+
+interface StoreState {
   submission: Submission | null;
-  setSubmission: (submission: Submission | null) => void;
-
-  // Current problem index
-  problemIndex: number;
-  setProblemIndex: (index: number) => void;
-
-  // Guidance data
   guidance: Guidance | null;
-  setGuidance: (guidance: Guidance | null) => void;
-
-  // Practice problems
   practiceProblems: PracticeProblem[];
-  setPracticeProblems: (problems: PracticeProblem[]) => void;
-
-  // Hint reveal level (1-4)
-  revealLevel: number;
-  incrementRevealLevel: () => void;
-  resetRevealLevel: () => void;
-
-  // Loading states
   isLoading: boolean;
-  setIsLoading: (loading: boolean) => void;
-
-  // Error handling
   error: string | null;
-  setError: (error: string | null) => void;
-
-  // Session ID
   sessionId: string | null;
-  setSessionId: (id: string | null) => void;
+  settings: Settings;
+  history: ChatMessage[];
 
-  // Reset everything
+  setSubmission: (submission: Submission | null) => void;
+  setGuidance: (guidance: Guidance | null) => void;
+  setPracticeProblems: (problems: PracticeProblem[]) => void;
+  setIsLoading: (isLoading: boolean) => void;
+  setError: (error: string | null) => void;
+  setSessionId: (sessionId: string | null) => void;
+  setSettings: (settings: Partial<Settings>) => void;
+  addMessage: (message: ChatMessage) => void;
+  clearHistory: () => void;
   reset: () => void;
 }
 
-export const useStore = create<AppState>((set) => ({
-  submission: null,
-  setSubmission: (submission) => set({ submission }),
+export const useStore = create<StoreState>()(
+  persist(
+    (set) => ({
+      submission: null,
+      guidance: null,
+      practiceProblems: [],
+      isLoading: false,
+      error: null,
+      sessionId: null,
+      settings: {
+        provider: 'gemini',
+        apiKey: '',
+      },
+      history: [],
 
-  problemIndex: 0,
-  setProblemIndex: (index) => set({ problemIndex: index }),
-
-  guidance: null,
-  setGuidance: (guidance) => set({ guidance }),
-
-  practiceProblems: [],
-  setPracticeProblems: (problems) => set({ practiceProblems: problems }),
-
-  revealLevel: 0,
-  incrementRevealLevel: () => set((state) => ({ revealLevel: Math.min(state.revealLevel + 1, 4) })),
-  resetRevealLevel: () => set({ revealLevel: 0 }),
-
-  isLoading: false,
-  setIsLoading: (loading) => set({ isLoading: loading }),
-
-  error: null,
-  setError: (error) => set({ error }),
-
-  sessionId: null,
-  setSessionId: (id) => set({ sessionId: id }),
-
-  reset: () => set({
-    submission: null,
-    problemIndex: 0,
-    guidance: null,
-    practiceProblems: [],
-    revealLevel: 0,
-    isLoading: false,
-    error: null,
-  }),
-}));
+      setSubmission: (submission) => set({ submission }),
+      setGuidance: (guidance) => set({ guidance }),
+      setPracticeProblems: (practiceProblems) => set({ practiceProblems }),
+      setIsLoading: (isLoading) => set({ isLoading }),
+      setError: (error) => set({ error }),
+      setSessionId: (sessionId) => set({ sessionId }),
+      setSettings: (newSettings) => set((state) => ({
+        settings: { ...state.settings, ...newSettings }
+      })),
+      addMessage: (message) => set((state) => ({ history: [...state.history, message] })),
+      clearHistory: () => set({ history: [] }),
+      reset: () => set((state) => ({
+        submission: null,
+        guidance: null,
+        practiceProblems: [],
+        error: null,
+        isLoading: false,
+        // Don't reset settings, sessionId, or history by default
+      })),
+    }),
+    {
+      name: 'homework-tools-storage',
+      partialize: (state) => ({
+        sessionId: state.sessionId,
+        settings: state.settings,
+        history: state.history
+      }),
+    }
+  )
+);
