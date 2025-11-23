@@ -20,14 +20,14 @@ class GeminiClient:
         """
         Generate a dual response: Student Explanation + Parent Context.
         """
-        prompt = f"""You are a homework assistant.
-        
+        prompt = f"""You are a helpful homework assistant for students and their parents.
+
         User Query: {user_query}
         Target Grade Level: {grade_level}
 
         Provide a JSON response with two distinct parts:
-        1. "student_response": A clear, simple, conceptual explanation for the student. Use analogies. Be encouraging.
-        2. "parent_context": A deeper explanation for the parent, including technical terms, teaching tips, and what to look out for.
+        1. "student_response": A clear, direct explanation that helps the student understand the concept. Be concise and respectful. Only use analogies if they genuinely clarify a difficult concept. Focus on helping them actually solve the problem or understand the topic.
+        2. "parent_context": Additional context for parents including relevant technical terms, teaching suggestions, and common misconceptions to watch for.
 
         Format:
         {{

@@ -60,17 +60,16 @@ export function ChatInterface() {
         return;
       }
 
-      // Generate SVG from whiteboard
-      const svg = await whiteboardEditor.getSvg([...shapeIds], {
+      // Generate SVG from whiteboard using getSvgString
+      const svgResult = await whiteboardEditor.getSvgString([...shapeIds], {
         scale: 1,
         background: true,
       });
 
-      if (!svg) throw new Error("Could not generate snapshot");
+      if (!svgResult?.svg) throw new Error("Could not generate snapshot");
 
-      // Convert SVG to PNG Blob
+      // Convert SVG string to PNG Blob
       const imageBlob = await new Promise<Blob | null>((resolve, reject) => {
-        const svgString = new XMLSerializer().serializeToString(svg);
         const img = new Image();
         img.onload = () => {
           const canvas = document.createElement('canvas');
@@ -89,7 +88,7 @@ export function ChatInterface() {
         };
         img.onerror = () => reject(new Error("Failed to render SVG"));
         // Use base64 to avoid parsing issues
-        img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgString)));
+        img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgResult.svg)));
       });
 
       if (!imageBlob) throw new Error("Failed to create image blob");
