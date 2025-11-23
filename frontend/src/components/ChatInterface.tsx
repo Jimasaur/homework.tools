@@ -29,7 +29,8 @@ export function ChatInterface() {
     settings,
     history,
     addMessage,
-    clearHistory
+    clearHistory,
+    whiteboardEditor
   } = useStore();
 
   // Auto-focus input on load
@@ -41,6 +42,90 @@ export function ChatInterface() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [history, isLoading]);
+
+  const handleCaptureWhiteboard = async () => {
+    if (!whiteboardEditor) {
+      setError("Whiteboard is not ready yet. Try opening the Whiteboard tab first.");
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const shapeIds = whiteboardEditor.getCurrentPageShapeIds();
+      if (shapeIds.size === 0) {
+        setError("Whiteboard is empty! Draw something first.");
+        setIsLoading(false);
+        return;
+      }
+
+      // Generate SVG from whiteboard
+      const svg = await whiteboardEditor.getSvg([...shapeIds], {
+        scale: 1,
+        background: true,
+      });
+
+      if (!svg) throw new Error("Could not generate snapshot");
+
+      // Convert SVG to PNG Blob
+      const imageBlob = await new Promise<Blob | null>((resolve, reject) => {
+        const svgString = new XMLSerializer().serializeToString(svg);
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error("Canvas context failed"));
+            return;
+          }
+          // Fill white background (SVG might be transparent)
+          ctx.fillStyle = 'white';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0);
+          canvas.toBlob(resolve, 'image/png');
+        };
+        img.onerror = () => reject(new Error("Failed to render SVG"));
+        // Use base64 to avoid parsing issues
+        img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgString)));
+      });
+
+      if (!imageBlob) throw new Error("Failed to create image blob");
+
+      const file = new File([imageBlob], "whiteboard_snapshot.png", { type: "image/png" });
+
+      // Optimistic user message
+      const userMsgId = Date.now().toString();
+      addMessage({
+        id: userMsgId,
+        role: 'user',
+        content: `📸 Captured Whiteboard Snapshot`,
+        timestamp: Date.now()
+      });
+
+      // Submit as upload
+      const sub = await submitUpload(file, sessionId || undefined);
+      setSubmission(sub);
+
+      // Fetch guidance
+      const guidanceData = await getGuidance(sub.id, settings.provider, settings.apiKey);
+
+      addMessage({
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: guidanceData,
+        timestamp: Date.now()
+      });
+
+    } catch (err: any) {
+      console.error("Snapshot failed", err);
+      setError("Failed to capture whiteboard. " + (err.message || ""));
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const onDrop = async (acceptedFiles: File[]) => {
     if (acceptedFiles.length === 0) return;
@@ -328,6 +413,19 @@ export function ChatInterface() {
               style={{ minHeight: '60px', maxHeight: '200px' }}
             />
             <div className="absolute right-2 bottom-2 flex items-center gap-1">
+              {/* Capture Whiteboard Button */}
+              <button
+                type="button"
+                onClick={handleCaptureWhiteboard}
+                className="p-2 text-gray-400 hover:text-purple-500 hover:bg-purple-50 rounded-full transition-colors"
+                title="Capture Whiteboard & Ask AI"
+              >
+                <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </button>
+
               {/* File Upload Button */}
               <button
                 type="button"

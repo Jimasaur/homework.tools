@@ -33,6 +33,11 @@ interface StoreState {
   setSettings: (settings: Partial<Settings>) => void;
   addMessage: (message: ChatMessage) => void;
   clearHistory: () => void;
+
+  // Whiteboard integration
+  whiteboardEditor: any; // Using any to avoid complex tldraw type dependency in store
+  setWhiteboardEditor: (editor: any) => void;
+
   reset: () => void;
 }
 
@@ -50,6 +55,7 @@ export const useStore = create<StoreState>()(
         apiKey: '',
       },
       history: [],
+      whiteboardEditor: null,
 
       setSubmission: (submission) => set({ submission }),
       setGuidance: (guidance) => set({ guidance }),
@@ -62,13 +68,15 @@ export const useStore = create<StoreState>()(
       })),
       addMessage: (message) => set((state) => ({ history: [...state.history, message] })),
       clearHistory: () => set({ history: [] }),
+      setWhiteboardEditor: (editor) => set({ whiteboardEditor: editor }),
+
       reset: () => set((state) => ({
         submission: null,
         guidance: null,
         practiceProblems: [],
         error: null,
         isLoading: false,
-        // Don't reset settings, sessionId, or history by default
+        // Don't reset settings, sessionId, history, or whiteboardEditor
       })),
     }),
     {
@@ -77,6 +85,7 @@ export const useStore = create<StoreState>()(
         sessionId: state.sessionId,
         settings: state.settings,
         history: state.history
+        // Explicitly excluding whiteboardEditor from persistence
       }),
     }
   )
