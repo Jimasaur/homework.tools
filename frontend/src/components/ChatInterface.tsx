@@ -15,6 +15,7 @@ export function ChatInterface() {
   const [message, setMessage] = useState('');
   const [showParentContext, setShowParentContext] = useState<Record<string, boolean>>({}); // Track expanded state by message ID
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [includeWhiteboard, setIncludeWhiteboard] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -43,32 +44,20 @@ export function ChatInterface() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [history, isLoading]);
 
-  const handleCaptureWhiteboard = async () => {
-    if (!whiteboardEditor) {
-      setError("Whiteboard is not ready yet. Try opening the Whiteboard tab first.");
-      return;
-    }
-
-    setIsLoading(true);
-    setError(null);
+  const captureWhiteboardAsFile = async (): Promise<File | null> => {
+    if (!whiteboardEditor) return null;
 
     try {
       const shapeIds = whiteboardEditor.getCurrentPageShapeIds();
-      if (shapeIds.size === 0) {
-        setError("Whiteboard is empty! Draw something first.");
-        setIsLoading(false);
-        return;
-      }
+      if (shapeIds.size === 0) return null;
 
-      // Generate SVG from whiteboard using getSvgString
       const svgResult = await whiteboardEditor.getSvgString([...shapeIds], {
         scale: 1,
         background: true,
       });
 
-      if (!svgResult?.svg) throw new Error("Could not generate snapshot");
+      if (!svgResult?.svg) return null;
 
-      // Convert SVG string to PNG Blob
       const imageBlob = await new Promise<Blob | null>((resolve, reject) => {
         const img = new Image();
         img.onload = () => {
@@ -80,49 +69,21 @@ export function ChatInterface() {
             reject(new Error("Canvas context failed"));
             return;
           }
-          // Fill white background (SVG might be transparent)
           ctx.fillStyle = 'white';
           ctx.fillRect(0, 0, canvas.width, canvas.height);
           ctx.drawImage(img, 0, 0);
           canvas.toBlob(resolve, 'image/png');
         };
         img.onerror = () => reject(new Error("Failed to render SVG"));
-        // Use base64 to avoid parsing issues
         img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgResult.svg)));
       });
 
-      if (!imageBlob) throw new Error("Failed to create image blob");
+      if (!imageBlob) return null;
 
-      const file = new File([imageBlob], "whiteboard_snapshot.png", { type: "image/png" });
-
-      // Optimistic user message
-      const userMsgId = Date.now().toString();
-      addMessage({
-        id: userMsgId,
-        role: 'user',
-        content: `📸 Captured Whiteboard Snapshot`,
-        timestamp: Date.now()
-      });
-
-      // Submit as upload
-      const sub = await submitUpload(file, sessionId || undefined);
-      setSubmission(sub);
-
-      // Fetch guidance
-      const guidanceData = await getGuidance(sub.id, settings.provider, settings.apiKey);
-
-      addMessage({
-        id: Date.now().toString(),
-        role: 'assistant',
-        content: guidanceData,
-        timestamp: Date.now()
-      });
-
-    } catch (err: any) {
-      console.error("Snapshot failed", err);
-      setError("Failed to capture whiteboard. " + (err.message || ""));
-    } finally {
-      setIsLoading(false);
+      return new File([imageBlob], "whiteboard_snapshot.png", { type: "image/png" });
+    } catch (err) {
+      console.error("Whiteboard capture failed:", err);
+      return null;
     }
   };
 
@@ -183,25 +144,51 @@ export function ChatInterface() {
   const handleSubmit = async (e?: React.FormEvent, overrideText?: string) => {
     if (e) e.preventDefault();
     const textToSubmit = overrideText || message;
-    if (!textToSubmit.trim()) return;
+    if (!textToSubmit.trim() && !includeWhiteboard) return;
 
     setIsLoading(true);
     setError(null);
     setMessage('');
 
-    // Optimistic user message
-    addMessage({
-      id: Date.now().toString(),
-      role: 'user',
-      content: textToSubmit,
-      timestamp: Date.now()
-    });
-
     try {
-      const sub = await submitText(textToSubmit, sessionId || undefined);
+      let sub: any;
+      let userMessageContent = textToSubmit;
+
+      if (includeWhiteboard) {
+        // Capture whiteboard and send with text
+        const whiteboardFile = await captureWhiteboardAsFile();
+        if (!whiteboardFile) {
+          setError("Whiteboard is empty. Draw something or turn off the toggle.");
+          setIsLoading(false);
+          return;
+        }
+
+        // Optimistic user message showing both
+        userMessageContent = textToSubmit || "📸 Whiteboard Snapshot";
+        addMessage({
+          id: Date.now().toString(),
+          role: 'user',
+          content: userMessageContent,
+          timestamp: Date.now()
+        });
+
+        // Submit image with text context
+        sub = await submitUpload(whiteboardFile, sessionId || undefined, textToSubmit || undefined);
+      } else {
+        // Regular text submission
+        addMessage({
+          id: Date.now().toString(),
+          role: 'user',
+          content: textToSubmit,
+          timestamp: Date.now()
+        });
+
+        sub = await submitText(textToSubmit, sessionId || undefined);
+      }
+
       setSubmission(sub);
 
-      // Fetch guidance immediately
+      // Fetch guidance
       const guidanceData = await getGuidance(sub.id, settings.provider, settings.apiKey);
 
       addMessage({
@@ -411,19 +398,17 @@ export function ChatInterface() {
               rows={1}
               style={{ minHeight: '60px', maxHeight: '200px' }}
             />
-            <div className="absolute right-2 bottom-2 flex items-center gap-1">
-              {/* Capture Whiteboard Button */}
-              <button
-                type="button"
-                onClick={handleCaptureWhiteboard}
-                className="p-2 text-gray-400 hover:text-purple-500 hover:bg-purple-50 rounded-full transition-colors"
-                title="Capture Whiteboard & Ask AI"
-              >
-                <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-              </button>
+            <div className="absolute right-2 bottom-2 flex items-center gap-2">
+              {/* Include Whiteboard Toggle */}
+              <label className="flex items-center gap-2 px-3 py-1.5 bg-purple-50 hover:bg-purple-100 rounded-full cursor-pointer transition-colors">
+                <input
+                  type="checkbox"
+                  checked={includeWhiteboard}
+                  onChange={(e) => setIncludeWhiteboard(e.target.checked)}
+                  className="w-4 h-4 text-purple-600 bg-white border-purple-300 rounded focus:ring-purple-500"
+                />
+                <span className="text-sm font-medium text-purple-700">📋 Include Whiteboard</span>
+              </label>
 
               {/* File Upload Button */}
               <button

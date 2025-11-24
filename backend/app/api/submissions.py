@@ -35,14 +35,16 @@ class GuidanceResponse(BaseModel):
 # Simple in-memory store for the demo (to support the new /text and /guidance flow)
 submission_store = {}
 
-@router.post("/upload", response_model=SubmissionResponse)
-async def create_submission_upload(
+@router.post("/image", response_model=SubmissionResponse)
+async def create_submission_image(
     file: UploadFile = File(...),
     session_id: Optional[str] = Form(None),
+    text: Optional[str] = Form(None),  # Optional text context
     db: AsyncSession = Depends(get_db)
 ):
     """
     Upload a file (image or PDF) for homework help.
+    Optionally include text context that will be sent to the AI along with the image.
     """
     # Validate file type
     file_ext = Path(file.filename).suffix.lower().replace('.', '')
@@ -69,11 +71,11 @@ async def create_submission_upload(
         content = await file.read()
         await f.write(content)
 
-    # Parse the submission
+    # Parse the submission (pass text context if provided)
     try:
         parsed_data = await parsing_orchestrator.parse_submission(
             file_path=str(file_path),
-            text=None,
+            text=text,  # Include text context
             file_type=file_type
         )
     except Exception as e:

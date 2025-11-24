@@ -53,14 +53,17 @@ export interface PracticeProblem {
 }
 
 // Submit a file upload
-export async function submitUpload(file: File, sessionId?: string): Promise<Submission> {
+export async function submitUpload(file: File, sessionId?: string, text?: string): Promise<Submission> {
   const formData = new FormData();
   formData.append('file', file);
   if (sessionId) {
     formData.append('session_id', sessionId);
   }
+  if (text) {
+    formData.append('text', text);
+  }
 
-  const response = await api.post<Submission>('/submissions/upload', formData, {
+  const response = await api.post<Submission>('/submissions/image', formData, {
     headers: {
       'Content-Type': 'multipart/form-data',
     },

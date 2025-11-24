@@ -13,8 +13,8 @@ class GeminiClient:
         if api_key:
             genai.configure(api_key=api_key)
         
-        self.model_name = "gemini-pro"
-        self.vision_model_name = "gemini-pro-vision"
+        self.model_name = "gemini-3-pro-preview"
+        self.vision_model_name = "gemini-3-pro-preview"
 
     async def generate_dual_response(self, user_query: str, grade_level: int = 8) -> dict:
         """

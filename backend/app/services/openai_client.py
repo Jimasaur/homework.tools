@@ -9,8 +9,8 @@ class OpenAIClient:
 
     def __init__(self):
         self.client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        self.model_reasoning = "gpt-4o"
-        self.model_classification = "gpt-4o-mini"
+        self.model_reasoning = "gpt-5.1-2025-11-13"
+        self.model_classification = "gpt-5.1-2025-11-13"
 
     async def classify_submission(self, problem_text: str) -> dict:
         """
